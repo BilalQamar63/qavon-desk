@@ -33,6 +33,45 @@ export interface AuthRequest extends Request {
   user?: AuthenticatedUser;
 }
 
+const AUTH_COOKIE_NAME = 'qavon_desk_token';
+const AUTH_COOKIE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
+
+function getAuthCookie(req: Request): string | undefined {
+  const cookieHeader = req.headers.cookie;
+  if (!cookieHeader) return undefined;
+
+  for (const cookie of cookieHeader.split(';')) {
+    const separator = cookie.indexOf('=');
+    if (separator === -1 || cookie.slice(0, separator).trim() !== AUTH_COOKIE_NAME) continue;
+
+    try {
+      return decodeURIComponent(cookie.slice(separator + 1).trim());
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+export function setAuthCookie(res: Response, token: string): void {
+  res.cookie(AUTH_COOKIE_NAME, token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: '/',
+    maxAge: AUTH_COOKIE_MAX_AGE,
+  });
+}
+
+export function clearAuthCookie(res: Response): void {
+  res.clearCookie(AUTH_COOKIE_NAME, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: '/',
+  });
+}
+
 export function generateToken(user: AuthenticatedUser): string {
   return jwt.sign(
     {
@@ -57,15 +96,7 @@ export async function comparePassword(plain: string, hashed: string): Promise<bo
 }
 
 export async function requireAuth(req: AuthRequest, res: Response, next: NextFunction) {
-  const rawHeader = req.headers.authorization || (req.headers['x-auth-token'] as string | undefined);
-
-  let token = '';
-  if (rawHeader && rawHeader.startsWith('Bearer ')) {
-    token = rawHeader.substring(7).trim();
-  } else if (rawHeader) {
-    token = rawHeader.trim();
-  }
-
+  const token = getAuthCookie(req);
   if (!token) {
     return res.status(401).json({ error: 'Authentication required. Please sign in.' });
   }

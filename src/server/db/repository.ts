@@ -29,7 +29,18 @@ export interface CrmRepository {
     role: UserRole;
     title: string;
     workspaceId: string;
+    invitationTokenHash?: string;
+    invitationExpiresAt?: Date;
   }): Promise<User>;
+  hasPendingInvitation(email: string, workspaceId: string): Promise<boolean>;
+  refreshPendingInvitation(
+    email: string,
+    workspaceId: string,
+    tokenHash: string,
+    expiresAt: Date,
+    invitation: { name: string; role: UserRole; title: string }
+  ): Promise<User | null>;
+  completeInvitation(tokenHash: string, passwordHash: string): Promise<User | null>;
   createUserWithWorkspace(userData: {
     email: string;
     passwordHash: string;
@@ -264,8 +275,25 @@ class JsonStoreRepository implements CrmRepository {
     role: UserRole;
     title: string;
     workspaceId: string;
+    invitationTokenHash?: string;
+    invitationExpiresAt?: Date;
   }) {
     return dbStore.createUser(userData);
+  }
+  async hasPendingInvitation(email: string, workspaceId: string) {
+    return dbStore.hasPendingInvitation(email, workspaceId);
+  }
+  async refreshPendingInvitation(
+    email: string,
+    workspaceId: string,
+    tokenHash: string,
+    expiresAt: Date,
+    invitation: { name: string; role: UserRole; title: string }
+  ) {
+    return dbStore.refreshPendingInvitation(email, workspaceId, tokenHash, expiresAt, invitation);
+  }
+  async completeInvitation(tokenHash: string, passwordHash: string) {
+    return dbStore.completeInvitation(tokenHash, passwordHash);
   }
   async createUserWithWorkspace(userData: {
     email: string;

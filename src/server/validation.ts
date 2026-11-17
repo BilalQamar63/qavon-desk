@@ -48,6 +48,11 @@ export const registerSchema = z.object({
   companyName: z.string().trim().max(120).optional(),
 });
 
+export const acceptInviteSchema = z.object({
+  token: z.string().trim().min(1).max(200),
+  password: z.string().min(8, 'Password must be at least 8 characters').max(200),
+});
+
 export const switchRoleSchema = z.object({
   userId: z.string().trim().min(1).max(120).optional(),
   email: z.string().trim().email().max(255).optional(),

@@ -28,7 +28,13 @@ function createHttpError(message: string, status: number): Error & { status: num
 
 export interface DatabaseSchema {
   workspaces: Workspace[];
-  users: Array<User & { passwordHash: string }>;
+  users: Array<
+    User & {
+      passwordHash: string;
+      invitationTokenHash?: string;
+      invitationExpiresAt?: string;
+    }
+  >;
   leads: Lead[];
   companies: Company[];
   contacts: Contact[];
@@ -1298,17 +1304,20 @@ class DatabaseStore {
   public getUsers(workspaceId: string) {
     return this.data.users
       .filter((u) => u.workspaceId === workspaceId)
-      .map(({ passwordHash: _, ...safeUser }) => safeUser);
+      .map(({ passwordHash: _, invitationTokenHash: __, invitationExpiresAt: ___, ...safeUser }) => safeUser);
   }
 
   public findUserByEmail(email: string) {
-    return this.data.users.find((u) => u.email.toLowerCase() === email.trim().toLowerCase()) || null;
+    const user = this.data.users.find((u) => u.email.toLowerCase() === email.trim().toLowerCase());
+    if (!user) return null;
+    const { invitationTokenHash: _, invitationExpiresAt: __, ...safeUser } = user;
+    return safeUser;
   }
 
   public findUserById(id: string) {
     const user = this.data.users.find((u) => u.id === id);
     if (!user) return null;
-    const { passwordHash: _, ...safeUser } = user;
+    const { passwordHash: _, invitationTokenHash: __, invitationExpiresAt: ___, ...safeUser } = user;
     return safeUser;
   }
 
@@ -1318,7 +1327,7 @@ class DatabaseStore {
       (u) => u.id === identifier || u.email.toLowerCase() === clean
     );
     if (!user) return null;
-    const { passwordHash: _, ...safeUser } = user;
+    const { passwordHash: _, invitationTokenHash: __, invitationExpiresAt: ___, ...safeUser } = user;
     return safeUser;
   }
 
@@ -1329,12 +1338,18 @@ class DatabaseStore {
     role: UserRole;
     title: string;
     workspaceId: string;
+    invitationTokenHash?: string;
+    invitationExpiresAt?: Date;
   }) {
     if (this.findUserByEmail(userData.email)) {
       throw createHttpError('A user with this email already exists', 409);
     }
 
-    const newUser: User & { passwordHash: string } = {
+    const newUser: User & {
+      passwordHash: string;
+      invitationTokenHash?: string;
+      invitationExpiresAt?: string;
+    } = {
       id: `usr-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
       email: userData.email.trim().toLowerCase(),
       name: userData.name.trim(),
@@ -1344,10 +1359,78 @@ class DatabaseStore {
       workspaceId: userData.workspaceId,
       createdAt: new Date().toISOString(),
       passwordHash: userData.passwordHash,
+      invitationTokenHash: userData.invitationTokenHash,
+      invitationExpiresAt: userData.invitationExpiresAt?.toISOString(),
     };
     this.data.users.push(newUser);
     this.persist();
-    const { passwordHash: _, ...safeUser } = newUser;
+    const {
+      passwordHash: _,
+      invitationTokenHash: __,
+      invitationExpiresAt: ___,
+      ...safeUser
+    } = newUser;
+    return safeUser;
+  }
+
+  public hasPendingInvitation(email: string, workspaceId: string) {
+    return this.data.users.some(
+      (user) =>
+        user.email === email.trim().toLowerCase() &&
+        user.workspaceId === workspaceId &&
+        Boolean(user.invitationTokenHash)
+    );
+  }
+
+  public refreshPendingInvitation(
+    email: string,
+    workspaceId: string,
+    tokenHash: string,
+    expiresAt: Date,
+    invitation: { name: string; role: UserRole; title: string }
+  ) {
+    const user = this.data.users.find(
+      (candidate) =>
+        candidate.email === email.trim().toLowerCase() &&
+        candidate.workspaceId === workspaceId &&
+        Boolean(candidate.invitationTokenHash)
+    );
+    if (!user) return null;
+
+    user.invitationTokenHash = tokenHash;
+    user.invitationExpiresAt = expiresAt.toISOString();
+    user.name = invitation.name.trim();
+    user.role = invitation.role;
+    user.title = invitation.title.trim() || 'Account Executive';
+    this.persist();
+    const {
+      passwordHash: _,
+      invitationTokenHash: __,
+      invitationExpiresAt: ___,
+      ...safeUser
+    } = user;
+    return safeUser;
+  }
+
+  public completeInvitation(tokenHash: string, passwordHash: string) {
+    const user = this.data.users.find(
+      (candidate) =>
+        candidate.invitationTokenHash === tokenHash &&
+        candidate.invitationExpiresAt &&
+        Date.parse(candidate.invitationExpiresAt) > Date.now()
+    );
+    if (!user) return null;
+
+    user.passwordHash = passwordHash;
+    delete user.invitationTokenHash;
+    delete user.invitationExpiresAt;
+    this.persist();
+    const {
+      passwordHash: _,
+      invitationTokenHash: __,
+      invitationExpiresAt: ___,
+      ...safeUser
+    } = user;
     return safeUser;
   }
 

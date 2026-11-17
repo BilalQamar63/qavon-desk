@@ -1,6 +1,8 @@
 import express, { Request, Response, NextFunction } from 'express';
+import { createHash, randomBytes } from 'crypto';
 import { crmRepo } from './db/repository.ts';
 import { isPostgresConnected } from './db/prisma.ts';
+import { getInvitationExpiry, sendInvitationEmail } from './email.ts';
 import {
   requireAuth,
   requireRole,
@@ -8,11 +10,14 @@ import {
   hashPassword,
   comparePassword,
   isDemoModeEnabled,
+  setAuthCookie,
+  clearAuthCookie,
   AuthRequest,
 } from './auth.ts';
 import {
   loginSchema,
   registerSchema,
+  acceptInviteSchema,
   switchRoleSchema,
   leadCreateSchema,
   leadUpdateSchema,
@@ -92,7 +97,8 @@ export function createApp() {
 
       const { passwordHash: _, ...safeUser } = user;
       const token = generateToken(safeUser);
-      return res.json({ user: safeUser, token });
+      setAuthCookie(res, token);
+      return res.json({ user: safeUser });
     } catch (err) {
       return handleRouteError(res, err, 'Failed to authenticate');
     }
@@ -114,9 +120,31 @@ export function createApp() {
       });
 
       const token = generateToken(user);
-      return res.status(201).json({ user, token });
+      setAuthCookie(res, token);
+      return res.status(201).json({ user });
     } catch (err) {
       return handleRouteError(res, err, 'Failed to create user account');
+    }
+  });
+
+  app.post('/api/auth/accept-invite', async (req, res) => {
+    try {
+      const parsed = acceptInviteSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: formatZodError(parsed.error) });
+      }
+
+      const tokenHash = createHash('sha256').update(parsed.data.token).digest('hex');
+      const passwordHash = await hashPassword(parsed.data.password);
+      const user = await crmRepo.completeInvitation(tokenHash, passwordHash);
+      if (!user) {
+        return res.status(400).json({ error: 'This invitation link is invalid or has expired.' });
+      }
+
+      setAuthCookie(res, generateToken(user));
+      return res.json({ user });
+    } catch (err) {
+      return handleRouteError(res, err, 'Failed to accept invitation');
     }
   });
 
@@ -130,7 +158,8 @@ export function createApp() {
         return res.status(401).json({ error: 'User not found' });
       }
       const token = generateToken(user);
-      return res.json({ user, token });
+      setAuthCookie(res, token);
+      return res.json({ user });
     } catch (err) {
       return handleRouteError(res, err, 'Failed to retrieve current session');
     }
@@ -146,7 +175,8 @@ export function createApp() {
         return res.status(404).json({ error: 'Demo account not found. Seed the database first.' });
       }
       const token = generateToken(demoUser);
-      return res.json({ user: demoUser, token });
+      setAuthCookie(res, token);
+      return res.json({ user: demoUser });
     } catch (err) {
       return handleRouteError(res, err, 'Failed to start demo session');
     }
@@ -168,13 +198,15 @@ export function createApp() {
         return res.status(404).json({ error: 'Target user role not found' });
       }
       const token = generateToken(targetUser);
-      return res.json({ user: targetUser, token });
+      setAuthCookie(res, token);
+      return res.json({ user: targetUser });
     } catch (err) {
       return handleRouteError(res, err, 'Failed to switch role');
     }
   });
 
   app.post('/api/auth/logout', (_req, res) => {
+    clearAuthCookie(res);
     res.json({ success: true, message: 'Signed out successfully' });
   });
 
@@ -755,14 +787,64 @@ export function createApp() {
         return res.status(403).json({ error: 'Only workspace owners can invite another owner.' });
       }
 
-      const defaultHash = await hashPassword('password123');
+      const email = parsed.data.email.trim().toLowerCase();
+      const existing = await crmRepo.findUserWithPasswordByEmail(email);
+      const isPendingInvite =
+        existing && (await crmRepo.hasPendingInvitation(email, req.user!.workspaceId));
+      if (existing && !isPendingInvite) {
+        return res.status(409).json({ error: 'A user with this email already exists.' });
+      }
+
+      const workspace = await crmRepo.getWorkspace(req.user!.workspaceId);
+      if (!workspace) {
+        return res.status(404).json({ error: 'Workspace not found.' });
+      }
+
+      const invitationToken = randomBytes(32).toString('hex');
+      const invitationTokenHash = createHash('sha256').update(invitationToken).digest('hex');
+      const invitationExpiresAt = getInvitationExpiry();
+      try {
+        await sendInvitationEmail({
+          email,
+          name: parsed.data.name,
+          workspaceName: workspace.name,
+          token: invitationToken,
+        });
+      } catch (err) {
+        console.error('Failed to send team invitation email:', err);
+        return res.status(503).json({
+          error: 'Could not send the invitation email. Check the SMTP settings and try again.',
+        });
+      }
+
+      const passwordHash = await hashPassword(randomBytes(32).toString('hex'));
+      if (isPendingInvite) {
+        const resentUser = await crmRepo.refreshPendingInvitation(
+          email,
+          req.user!.workspaceId,
+          invitationTokenHash,
+          invitationExpiresAt,
+          {
+            name: parsed.data.name,
+            role: parsed.data.role,
+            title: parsed.data.title || 'Account Executive',
+          }
+        );
+        if (!resentUser) {
+          return res.status(409).json({ error: 'This invitation is no longer pending.' });
+        }
+        return res.json(resentUser);
+      }
+
       const newUser = await crmRepo.createUser({
         name: parsed.data.name,
-        email: parsed.data.email,
-        passwordHash: defaultHash,
+        email,
+        passwordHash,
         role: parsed.data.role,
         title: parsed.data.title || 'Account Executive',
         workspaceId: req.user!.workspaceId,
+        invitationTokenHash,
+        invitationExpiresAt,
       });
 
       return res.status(201).json(newUser);

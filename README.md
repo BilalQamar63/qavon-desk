@@ -39,7 +39,8 @@
 
 ## Key Features
 
-- **Workspace Authentication:** Sign up (creates an isolated organization workspace), sign in, bcrypt password hashing, and JWT sessions.
+- **Workspace Authentication:** Sign up (creates an isolated organization workspace), sign in, bcrypt password hashing, and JWT sessions stored in an HttpOnly cookie.
+- **Bookmarkable Workspace Pages:** Overview, Deals, Leads, Companies, Contacts, Activities, Reports, Team, and Settings each have their own URL and restore correctly on refresh.
 - **Overview Dashboard:** Live KPI cards (Active Pipeline, Weighted Forecast, Active Deals, Won Revenue), 6-month revenue chart, recent deals, pipeline breakdown, and upcoming tasks.
 - **Leads Management:** Search, filter by status (`New`, `Contacted`, `Qualified`, `Unqualified`) and source (`Website`, `LinkedIn`, `Referral`, `Outbound`, `Event`, `Partner`), detail drawer, and **one-click Lead-to-Deal conversion**.
 - **Companies & Contacts Directory:** Manage client organizations (industry, size, website, contact info, owner) and link multiple decision-maker contacts.
@@ -75,7 +76,7 @@ _(To sign in later, switch to **`Sign in`** and enter your email and password.)_
    - **Job Title:** `Account Executive`
    - **Role & Permissions \*:** `Sales Representative`, `Admin`, or `Owner`
 3. Click **`Send Invitation`**.
-4. Share the app URL with your teammate—their initial temporary password is **`password123`**.
+4. The teammate receives an email with a one-time link to create their password. Configure SMTP before inviting team members; see [`DEPLOYMENT.md`](./DEPLOYMENT.md#invitation-email-setup).
 
 ### 3. Add Companies
 
@@ -168,6 +169,14 @@ npm install
 cp .env.example .env
 npm run dev
 ```
+
+If `.env` configures PostgreSQL with `DATABASE_URL`, apply the database migrations before starting the server:
+
+```bash
+npx prisma migrate deploy
+```
+
+Team invitation emails require SMTP settings; see [`DEPLOYMENT.md`](./DEPLOYMENT.md#invitation-email-setup).
 
 Open `http://localhost:3000`.
 

@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User } from '../types/crm.ts';
-import { api, getStoredToken, removeStoredToken } from '../lib/api.ts';
+import { ApiError, api } from '../lib/api.ts';
 
 const SIGNED_OUT_FLAG = 'qavon_desk_signed_out';
 
@@ -10,6 +10,7 @@ interface AuthContextType {
   demoMode: boolean;
   login: (email: string, password: string) => Promise<void>;
   register: (name: string, email: string, password: string, companyName?: string) => Promise<void>;
+  acceptInvitation: (token: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   switchRole: (userId: string) => Promise<void>;
   canManageUsers: boolean;
@@ -24,6 +25,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [demoMode, setDemoMode] = useState(false);
 
   useEffect(() => {
+    localStorage.removeItem('qavon_desk_token');
+
     async function initAuth() {
       try {
         const config = await api.getAuthConfig().catch(() => ({ demoMode: false }));
@@ -34,14 +37,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return;
         }
 
-        const existingToken = getStoredToken();
-        if (existingToken) {
-          try {
-            const data = await api.getMe();
-            setUser(data.user);
-            return;
-          } catch {
-            removeStoredToken();
+        try {
+          const data = await api.getMe();
+          setUser(data.user);
+          return;
+        } catch (err) {
+          if (!(err instanceof ApiError) || err.status !== 401) {
+            throw err;
           }
         }
 
@@ -71,10 +73,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(data.user);
   };
 
+  const acceptInvitation = async (token: string, password: string) => {
+    sessionStorage.removeItem(SIGNED_OUT_FLAG);
+    const data = await api.acceptInvitation(token, password);
+    setUser(data.user);
+  };
+
   const logout = async () => {
     sessionStorage.setItem(SIGNED_OUT_FLAG, 'true');
-    await api.logout();
-    setUser(null);
+    try {
+      await api.logout();
+    } finally {
+      setUser(null);
+    }
   };
 
   const switchRole = async (userId: string) => {
@@ -94,6 +105,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         demoMode,
         login,
         register,
+        acceptInvitation,
         logout,
         switchRole,
         canManageUsers,

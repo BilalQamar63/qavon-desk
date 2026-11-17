@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Toaster, toast } from 'sonner';
 import { AuthProvider, useAuth } from './context/AuthContext.tsx';
 import { AuthView } from './components/auth/AuthView.tsx';
+import { AcceptInviteView } from './components/auth/AcceptInviteView.tsx';
 import { Sidebar, NavTab } from './components/layout/Sidebar.tsx';
 import { Header } from './components/layout/Header.tsx';
 import { DashboardView } from './components/dashboard/DashboardView.tsx';
@@ -31,9 +32,41 @@ import {
   Workspace,
 } from './types/crm.ts';
 
+const TAB_PATHS: Record<NavTab, string> = {
+  dashboard: '/overview',
+  deals: '/deals',
+  leads: '/leads',
+  companies: '/companies',
+  contacts: '/contacts',
+  activities: '/activities',
+  reports: '/reports',
+  team: '/team',
+  settings: '/settings',
+};
+
+const NAV_TABS: NavTab[] = [
+  'dashboard',
+  'deals',
+  'leads',
+  'companies',
+  'contacts',
+  'activities',
+  'reports',
+  'team',
+  'settings',
+];
+
+function getTabFromPath(pathname: string): NavTab | null {
+  const path = pathname.replace(/\/+$/, '') || '/';
+  if (path === '/') return 'dashboard';
+  return NAV_TABS.find((tab) => TAB_PATHS[tab] === path) || null;
+}
+
 function CRMApplication() {
   const { user, loading: authLoading } = useAuth();
-  const [currentTab, setCurrentTab] = useState<NavTab>('dashboard');
+  const [currentTab, setCurrentTab] = useState<NavTab>(
+    () => getTabFromPath(window.location.pathname) || 'dashboard'
+  );
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
 
   // Core Data States
@@ -69,6 +102,40 @@ function CRMApplication() {
   const [initialCompanyForActivity, setInitialCompanyForActivity] = useState<string | undefined>();
   const [selectedCompanyForDeals, setSelectedCompanyForDeals] = useState<string | undefined>();
 
+  const navigateToTab = useCallback((tab: NavTab) => {
+    setCurrentTab(tab);
+    const path = TAB_PATHS[tab];
+    if (window.location.pathname !== path) {
+      window.history.pushState({ tab }, '', path);
+    }
+  }, []);
+
+  useEffect(() => {
+    const syncTabWithLocation = () => {
+      if (window.location.pathname === '/accept-invite') return;
+
+      const tab = getTabFromPath(window.location.pathname);
+      if (tab) {
+        setCurrentTab(tab);
+      } else {
+        setCurrentTab('dashboard');
+        window.history.replaceState({ tab: 'dashboard' }, '', TAB_PATHS.dashboard);
+      }
+    };
+
+    if (window.location.pathname === '/') {
+      window.history.replaceState({ tab: 'dashboard' }, '', TAB_PATHS.dashboard);
+    } else if (
+      window.location.pathname !== '/accept-invite' &&
+      !getTabFromPath(window.location.pathname)
+    ) {
+      window.history.replaceState({ tab: 'dashboard' }, '', TAB_PATHS.dashboard);
+    }
+
+    window.addEventListener('popstate', syncTabWithLocation);
+    return () => window.removeEventListener('popstate', syncTabWithLocation);
+  }, []);
+
   const loadAllData = useCallback(async () => {
     if (!user) return;
     try {
@@ -98,6 +165,8 @@ function CRMApplication() {
   }, [user]);
 
   useEffect(() => {
+    if (window.location.pathname === '/accept-invite') return;
+
     if (user) {
       setDataLoading(true);
       loadAllData();
@@ -145,8 +214,12 @@ function CRMApplication() {
 
   const handleCompanyDealsSelect = (companyId: string) => {
     setSelectedCompanyForDeals(companyId);
-    setCurrentTab('deals');
+    navigateToTab('deals');
   };
+
+  if (window.location.pathname === '/accept-invite') {
+    return <AcceptInviteView />;
+  }
 
   if (authLoading || (user && dataLoading)) {
     return (
@@ -173,7 +246,7 @@ function CRMApplication() {
     <div className="min-h-screen flex bg-[#FAF7F0] text-[#181A1F] overflow-hidden">
       <Sidebar
         currentTab={currentTab}
-        onSelectTab={setCurrentTab}
+        onSelectTab={navigateToTab}
         workspace={workspace}
         overdueCount={overdueCount}
         isOpenMobile={isMobileSidebarOpen}
@@ -193,7 +266,7 @@ function CRMApplication() {
         <main className="flex-1 flex flex-col min-h-0 overflow-hidden">
           {currentTab === 'dashboard' && (
             <DashboardView
-              onNavigateTab={setCurrentTab}
+              onNavigateTab={navigateToTab}
               onOpenNewDealModal={handleOpenNewDeal}
               onOpenNewLeadModal={handleOpenNewLead}
               onSelectDeal={(deal) => setSelectedDealForDrawer(deal)}

@@ -11,36 +11,26 @@ import {
   Workspace,
 } from '../types/crm.ts';
 
-const TOKEN_KEY = 'qavon_desk_token';
-
-export function getStoredToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY);
-}
-
-export function setStoredToken(token: string) {
-  localStorage.setItem(TOKEN_KEY, token);
-}
-
-export function removeStoredToken() {
-  localStorage.removeItem(TOKEN_KEY);
+export class ApiError extends Error {
+  constructor(message: string, public readonly status: number) {
+    super(message);
+    this.name = 'ApiError';
+  }
 }
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const token = getStoredToken();
   const headers = new Headers(options.headers || {});
   headers.set('Content-Type', 'application/json');
-  if (token) {
-    headers.set('Authorization', `Bearer ${token}`);
-  }
 
   const response = await fetch(endpoint, {
     ...options,
+    credentials: 'same-origin',
     headers,
   });
 
   if (!response.ok) {
     const errorBody = await response.json().catch(() => ({}));
-    throw new Error(errorBody.error || `Request failed with status ${response.status}`);
+    throw new ApiError(errorBody.error || `Request failed with status ${response.status}`, response.status);
   }
 
   return response.json();
@@ -48,56 +38,50 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
 
 export const api = {
   // Auth
-  login: async (email: string, password: string): Promise<{ user: User; token: string }> => {
-    const res = await request<{ user: User; token: string }>('/api/auth/login', {
+  login: async (email: string, password: string): Promise<{ user: User }> => {
+    return request<{ user: User }>('/api/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password }),
     });
-    setStoredToken(res.token);
-    return res;
   },
 
   register: async (name: string, email: string, password: string, companyName?: string) => {
-    const res = await request<{ user: User; token: string }>('/api/auth/register', {
+    return request<{ user: User }>('/api/auth/register', {
       method: 'POST',
       body: JSON.stringify({ name, email, password, companyName }),
     });
-    setStoredToken(res.token);
-    return res;
+  },
+
+  acceptInvitation: async (token: string, password: string): Promise<{ user: User }> => {
+    return request<{ user: User }>('/api/auth/accept-invite', {
+      method: 'POST',
+      body: JSON.stringify({ token, password }),
+    });
   },
 
   getAuthConfig: async (): Promise<{ demoMode: boolean }> => {
     return request<{ demoMode: boolean }>('/api/auth/config');
   },
 
-  demoSession: async (): Promise<{ user: User; token: string }> => {
-    const res = await request<{ user: User; token: string }>('/api/auth/demo-session', {
+  demoSession: async (): Promise<{ user: User }> => {
+    return request<{ user: User }>('/api/auth/demo-session', {
       method: 'POST',
     });
-    setStoredToken(res.token);
-    return res;
   },
 
-  getMe: async (): Promise<{ user: User; token: string }> => {
-    return request<{ user: User; token: string }>('/api/auth/me');
+  getMe: async (): Promise<{ user: User }> => {
+    return request<{ user: User }>('/api/auth/me');
   },
 
-  switchRole: async (userId: string): Promise<{ user: User; token: string }> => {
-    const res = await request<{ user: User; token: string }>('/api/auth/switch-role', {
+  switchRole: async (userId: string): Promise<{ user: User }> => {
+    return request<{ user: User }>('/api/auth/switch-role', {
       method: 'POST',
       body: JSON.stringify({ userId }),
     });
-    setStoredToken(res.token);
-    return res;
   },
 
-  logout: async () => {
-    removeStoredToken();
-    try {
-      await request('/api/auth/logout', { method: 'POST' });
-    } catch {
-      // ignore
-    }
+  logout: async (): Promise<void> => {
+    await request('/api/auth/logout', { method: 'POST' });
   },
 
   // Dashboard
@@ -298,12 +282,7 @@ export const api = {
   },
 
   exportWorkspaceData: async (): Promise<void> => {
-    const token = getStoredToken();
-    const headers = new Headers();
-    if (token) {
-      headers.set('Authorization', `Bearer ${token}`);
-    }
-    const response = await fetch('/api/system/export', { headers });
+    const response = await fetch('/api/system/export', { credentials: 'same-origin' });
     if (!response.ok) {
       const errorBody = await response.json().catch(() => ({}));
       throw new Error(errorBody.error || `Export failed with status ${response.status}`);

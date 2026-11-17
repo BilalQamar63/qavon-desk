@@ -84,6 +84,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
+  const handleLogout = async () => {
+    try {
+      await logout();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to clear the sign-in cookie');
+    }
+  };
+
   return (
     <>
       {isOpenMobile && (
@@ -211,7 +219,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
             <button
               type="button"
-              onClick={logout}
+              onClick={handleLogout}
               title="Sign Out"
               aria-label="Sign Out"
               className="p-1.5 text-[#A39E93] hover:text-rose-400 hover:bg-[#23262E] rounded-md transition-colors shrink-0"

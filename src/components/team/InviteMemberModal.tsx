@@ -60,7 +60,7 @@ export const InviteMemberModal: React.FC<InviteMemberModalProps> = ({
         role,
         title: title.trim() || 'Account Executive',
       });
-      toast.success(`Invited ${name.trim()} to workspace`);
+      toast.success(`Invitation email sent to ${email.trim()}`);
       onInvited();
       onClose();
     } catch (err: any) {

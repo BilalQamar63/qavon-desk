@@ -265,6 +265,8 @@ export class PrismaRepository {
     role: UserRole;
     title: string;
     workspaceId: string;
+    invitationTokenHash?: string;
+    invitationExpiresAt?: Date;
   }): Promise<User> {
     const email = userData.email.trim().toLowerCase();
     const existing = await prisma.user.findUnique({ where: { email } });
@@ -281,6 +283,8 @@ export class PrismaRepository {
           role: userData.role,
           title: userData.title.trim() || 'Account Executive',
           avatar: '',
+          invitationTokenHash: userData.invitationTokenHash,
+          invitationExpiresAt: userData.invitationExpiresAt,
         },
       });
       await tx.workspaceMember.create({
@@ -294,6 +298,110 @@ export class PrismaRepository {
     });
 
     return mapUser(created, userData.workspaceId);
+  }
+
+  async hasPendingInvitation(email: string, workspaceId: string): Promise<boolean> {
+    const pending = await prisma.user.findFirst({
+      where: {
+        email: email.trim().toLowerCase(),
+        invitationTokenHash: { not: null },
+        memberships: { some: { workspaceId } },
+      },
+      select: { id: true },
+    });
+    return Boolean(pending);
+  }
+
+  async refreshPendingInvitation(
+    email: string,
+    workspaceId: string,
+    tokenHash: string,
+    expiresAt: Date,
+    invitation: { name: string; role: UserRole; title: string }
+  ): Promise<User | null> {
+    const invitedUser = await prisma.user.findFirst({
+      where: {
+        email: email.trim().toLowerCase(),
+        invitationTokenHash: { not: null },
+        memberships: { some: { workspaceId } },
+      },
+      include: {
+        memberships: {
+          where: { workspaceId },
+          take: 1,
+        },
+      },
+    });
+    const membership = invitedUser?.memberships[0];
+    if (!invitedUser || !membership) return null;
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const userUpdate = await tx.user.updateMany({
+        where: {
+          id: invitedUser.id,
+          invitationTokenHash: { not: null },
+        },
+        data: {
+          name: invitation.name.trim(),
+          role: invitation.role,
+          title: invitation.title.trim() || 'Account Executive',
+          invitationTokenHash: tokenHash,
+          invitationExpiresAt: expiresAt,
+        },
+      });
+      if (userUpdate.count !== 1) return false;
+
+      await tx.workspaceMember.updateMany({
+        where: { userId: invitedUser.id, workspaceId },
+        data: { role: invitation.role },
+      });
+      return true;
+    });
+    if (!updated) return null;
+
+    return mapUser(
+      {
+        ...invitedUser,
+        name: invitation.name.trim(),
+        role: invitation.role,
+        title: invitation.title.trim() || 'Account Executive',
+      },
+      workspaceId
+    );
+  }
+
+  async completeInvitation(tokenHash: string, passwordHash: string): Promise<User | null> {
+    const now = new Date();
+    const invitedUser = await prisma.user.findFirst({
+      where: {
+        invitationTokenHash: tokenHash,
+        invitationExpiresAt: { gt: now },
+      },
+      include: {
+        memberships: {
+          orderBy: { joinedAt: 'asc' },
+          take: 1,
+        },
+      },
+    });
+    const membership = invitedUser?.memberships[0];
+    if (!invitedUser || !membership) return null;
+
+    const updated = await prisma.user.updateMany({
+      where: {
+        id: invitedUser.id,
+        invitationTokenHash: tokenHash,
+        invitationExpiresAt: { gt: new Date() },
+      },
+      data: {
+        passwordHash,
+        invitationTokenHash: null,
+        invitationExpiresAt: null,
+      },
+    });
+    if (updated.count !== 1) return null;
+
+    return mapUser({ ...invitedUser, role: membership.role }, membership.workspaceId);
   }
 
   async createUserWithWorkspace(userData: {
